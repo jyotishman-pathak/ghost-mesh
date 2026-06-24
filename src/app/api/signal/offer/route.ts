@@ -1,55 +1,49 @@
 import { redis } from "@/infrastructure/signaling";
 import { NextRequest, NextResponse } from "next/server";
 
-
-
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
+    console.log(`[API] 📥 Received OFFER POST:`, body);
+
     const { targetUserId, senderUserId, sdp } = body;
 
     if (!targetUserId || !senderUserId || !sdp) {
+      console.error("[API] ❌ Missing fields in OFFER POST");
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
-    // Store the offer in Redis, keyed by the TARGET user.
-    // TTL is 60 seconds. If they don't connect in 60s, the offer dies.
     const redisKey = `signal:offer:${targetUserId}`;
-    await redis.set(redisKey, JSON.stringify({ senderUserId, sdp }), { ex: 60 });
+    // FIX: Pass the object directly. Upstash handles the JSON.stringify for us.
+    await redis.set(redisKey, { senderUserId, sdp }, { ex: 60 });
+    console.log(`[API] ✅ Stored OFFER at key: ${redisKey}`);
 
     return NextResponse.json({ status: "offer_stored" }, { status: 200 });
   } catch (error) {
-    console.error("Signal Offer Error:", error);
+    console.error("❌ Signal Offer POST Error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
 
-
 export async function GET(req: NextRequest) {
   try {
     const userId = req.nextUrl.searchParams.get("userId");
-    if (!userId) {
-      return NextResponse.json({ error: "Missing userId" }, { status: 400 });
-    }
+    if (!userId) return NextResponse.json({ error: "Missing userId" }, { status: 400 });
 
     const redisKey = `signal:offer:${userId}`;
     const offerData = await redis.get(redisKey);
-
-
-    console.log("offerData:", offerData);
-console.log("type:", typeof offerData);
-
 
     if (!offerData) {
       return NextResponse.json({ status: "no_offer" }, { status: 200 });
     }
 
-    // Delete the key immediately after reading (consume it)
     await redis.del(redisKey);
+    console.log(`[API] 📤 Consumed OFFER from key: ${redisKey}`);
 
+    // FIX: offerData is ALREADY an object because Upstash auto-deserializes it!
     return NextResponse.json({ status: "offer_found", data: offerData }, { status: 200 });
   } catch (error) {
-    console.error("Signal Get Offer Error:", error);
+    console.error("❌ Signal Offer GET Error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

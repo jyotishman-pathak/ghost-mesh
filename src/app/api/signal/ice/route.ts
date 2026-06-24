@@ -1,54 +1,46 @@
 import { redis } from "@/infrastructure/signaling";
 import { NextRequest, NextResponse } from "next/server";
 
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json();
+    const { targetUserId, senderUserId, candidate } = body;
 
-// User A or B sends an ICE candidate
-export async function POST(req: NextRequest){
-    try {
-        const body = await req.json()
-        const {targetUserId, senderUserId, candidate} = body
-        
-        if(!targetUserId|| !senderUserId||!candidate ){
-            return NextResponse.json({error:"Missing Fields"}, { status: 400})
-        }
-
-        const redisKey = `signal:ice:${targetUserId}`;
-        await redis.lpush(redisKey, JSON.stringify({senderUserId, candidate}))
-
-        await redis.expire(redisKey, 60);
-
-        return NextResponse.json({status: "candidate stored"}, {status:500})
-
-
-    } catch (error) {
-        console.log("Signal Ice error", error)
-        return NextResponse.json({error:"Internal Server Error"},{status:500})
+    if (!targetUserId || !senderUserId || !candidate) {
+      return NextResponse.json({ error: "Missing fields" }, { status: 400 });
     }
+
+    const redisKey = `signal:ice:${targetUserId}`;
+    // FIX: Pass object directly
+    await redis.lpush(redisKey, { senderUserId, candidate });
+    await redis.expire(redisKey, 60);
+
+    return NextResponse.json({ status: "candidate_stored" }, { status: 200 });
+  } catch (error) {
+    console.error("❌ Signal ICE POST Error:", error);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
 }
 
+export async function GET(req: NextRequest) {
+  try {
+    const userId = req.nextUrl.searchParams.get("userId");
+    if (!userId) return NextResponse.json({ error: "Missing userId" }, { status: 400 });
 
-// User A or B polls to get pending ICE candidates
+    const redisKey = `signal:ice:${userId}`;
+    const candidates = await redis.lrange(redisKey, 0, -1);
 
-export async function GET(req:NextRequest){
-    try{
-        const userId = req.nextUrl.searchParams.get("userId");
+    if (!candidates || candidates.length === 0) {
+      return NextResponse.json({ status: "no_candidates", data: [] }, { status: 200 });
+    }
 
-          if (!userId) return NextResponse.json({ error: "Missing userId" }, { status: 400 });
-  
-        const redisKey = `signal:ice:${userId}`;
+    await redis.del(redisKey);
 
-        const candidates = await redis.lrange(redisKey, 0,-1);
-
-        if(!candidates || candidates.length ===0){
-            return NextResponse.json({status:"No candidates", data:[]}, {status:200})
-        }  
-
-        await redis.del(redisKey)
-
-        const parsedCandidates = candidates.map(c=> JSON.parse(c as string))
-        return NextResponse.json({status:"candidates found ", data: parsedCandidates}, {status:200})
-
-        }catch (error) {
+    // FIX: Upstash automatically deserializes JSON strings in arrays back into objects!
+    // So 'candidates' is already an array of objects. No need to JSON.parse.
+    return NextResponse.json({ status: "candidates_found", data: candidates }, { status: 200 });
+  } catch (error) {
+    console.error("❌ Signal ICE GET Error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
